@@ -7,6 +7,12 @@ let mlModel = {
     monthlyPatterns: {},
     trained: false
 };
+let expenseCategories = [
+    "equipment",
+    "salaries",
+    "marketing",
+    "miscellaneous"
+];
 
 // Set the total budget
 function setTotalBudget() {
@@ -53,6 +59,34 @@ function trainModel() {
 
     mlModel.trained = true;
     return true;
+}
+
+// Add new function to manage categories
+function addNewCategory() {
+    const newCategory = document.getElementById('newCategory').value.trim().toLowerCase();
+    if (newCategory && !expenseCategories.includes(newCategory)) {
+        expenseCategories.push(newCategory);
+        updateCategoryDropdowns();
+        document.getElementById('newCategory').value = '';
+    } else {
+        alert('Please enter a valid unique category name');
+    }
+}
+
+// Update category dropdowns
+function updateCategoryDropdowns() {
+    const categorySelect = document.getElementById('expenseCategory');
+    const filterCategory = document.getElementById('filterCategory');
+    
+    // Clear existing options
+    categorySelect.innerHTML = '';
+    filterCategory.innerHTML = '<option value="all">All Categories</option>';
+    
+    // Add categories to both dropdowns
+    expenseCategories.forEach(category => {
+        categorySelect.add(new Option(category, category));
+        filterCategory.add(new Option(category, category));
+    });
 }
 
 // Predict expense for a category
@@ -187,11 +221,11 @@ function updateCharts() {
 }
 
 // Update expense list
-function updateExpenseList() {
+function updateExpenseList(expensesToShow = expenses) {
     const expenseList = document.getElementById('expenseList');
     expenseList.innerHTML = '';
 
-    expenses.forEach((expense, index) => {
+    expensesToShow.forEach((expense) => {
         const expenseElement = document.createElement('div');
         expenseElement.className = 'expense-item';
         expenseElement.innerHTML = `
@@ -200,6 +234,32 @@ function updateExpenseList() {
         `;
         expenseList.appendChild(expenseElement);
     });
+}
+
+function updateExpenseSummary(expensesToAnalyze = expenses) {
+    const summaryDiv = document.getElementById('expenseSummary');
+    
+    const totalAmount = expensesToAnalyze.reduce((sum, exp) => sum + exp.amount, 0);
+    const categoryTotals = expensesToAnalyze.reduce((acc, exp) => {
+        acc[exp.category] = (acc[exp.category] || 0) + exp.amount;
+        return acc;
+    }, {});
+    
+    let summaryHTML = `
+        <h3>Expense Summary</h3>
+        <p>Number of Expenses: ${expensesToAnalyze.length}</p>
+        <p>Total Amount: $${totalAmount.toFixed(2)}</p>
+        <h4>Category Breakdown:</h4>
+        <ul>
+    `;
+    
+    Object.entries(categoryTotals).forEach(([category, amount]) => {
+        const percentage = ((amount / totalAmount) * 100).toFixed(1);
+        summaryHTML += `<li>${category}: $${amount.toFixed(2)} (${percentage}%)</li>`;
+    });
+    
+    summaryHTML += '</ul>';
+    summaryDiv.innerHTML = summaryHTML;
 }
 
 // Provide budget suggestions with ML insights
@@ -257,24 +317,169 @@ function provideBudgetSuggestions() {
     suggestionsDiv.innerHTML = suggestionContent + mlInsights;
 }
 
-// Add event listener for category selection
-document.getElementById('expenseCategory').addEventListener('change', function() {
-    const selectedCategory = this.value;
-    const prediction = predictExpense(selectedCategory);
+function exportExpenseData() {
+    const data = {
+        totalBudget,
+        expenses,
+        categories: expenseCategories,
+        exportDate: new Date().toISOString()
+    };
     
-    if (prediction) {
-        document.getElementById('mlPredictions').style.display = 'block';
-        document.getElementById('expectedAmount').textContent = `$${prediction.expectedAmount.toFixed(2)}`;
-        document.getElementById('predictionConfidence').textContent = `${prediction.confidence.toFixed(1)}%`;
-        document.getElementById('suggestedMax').textContent = `$${prediction.suggestedMax.toFixed(2)}`;
-    } else {
-        document.getElementById('mlPredictions').style.display = 'none';
-    }
-});
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'budget-tracker-export.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
 
-// Initialize when the page loads
+// Add function to filter and sort expenses
+function filterAndSortExpenses() {
+    const filterCategory = document.getElementById('filterCategory').value;
+    const sortBy = document.getElementById('sortBy').value;
+    const filteredExpenses = [...expenses];
+    
+    // Apply category filter
+    if (filterCategory !== 'all') {
+        filteredExpenses.splice(0, filteredExpenses.length, 
+            ...filteredExpenses.filter(e => e.category === filterCategory)
+        );
+    }
+    
+    // Apply sorting
+    switch(sortBy) {
+        case 'date-desc':
+            filteredExpenses.sort((a, b) => new Date(b.date) - new Date(a.date));
+            break;
+        case 'date-asc':
+            filteredExpenses.sort((a, b) => new Date(a.date) - new Date(b.date));
+            break;
+        case 'amount-desc':
+            filteredExpenses.sort((a, b) => b.amount - a.amount);
+            break;
+        case 'amount-asc':
+            filteredExpenses.sort((a, b) => a.amount - b.amount);
+            break;
+    }
+    
+    updateExpenseList(filteredExpenses);
+    updateExpenseSummary(filteredExpenses);
+}
+
+// Add event listener for category selection
 document.addEventListener('DOMContentLoaded', () => {
+    // Initialize displays and charts
     updateBudgetDisplay();
     updateCharts();
     provideBudgetSuggestions();
+    updateCategoryDropdowns();
+    updateExpenseSummary();
+    
+    // Category selection event listener
+    document.getElementById('expenseCategory').addEventListener('change', function() {
+        const selectedCategory = this.value;
+        const prediction = predictExpense(selectedCategory);
+        
+        if (prediction) {
+            document.getElementById('mlPredictions').style.display = 'block';
+            document.getElementById('expectedAmount').textContent = `$${prediction.expectedAmount.toFixed(2)}`;
+            document.getElementById('predictionConfidence').textContent = `${prediction.confidence.toFixed(1)}%`;
+            document.getElementById('suggestedMax').textContent = `$${prediction.suggestedMax.toFixed(2)}`;
+        } else {
+            document.getElementById('mlPredictions').style.display = 'none';
+        }
+    });
+
+    // Filter and sort event listeners
+    document.getElementById('filterCategory').addEventListener('change', filterAndSortExpenses);
+    document.getElementById('sortBy').addEventListener('change', filterAndSortExpenses);
+
+    // Input validation for budget and expense amounts
+    document.getElementById('totalBudget').addEventListener('input', function() {
+        this.value = this.value.replace(/[^0-9.]/g, '');
+    });
+
+    document.getElementById('expenseAmount').addEventListener('input', function() {
+        this.value = this.value.replace(/[^0-9.]/g, '');
+    });
+
+    // Enter key support for inputs
+    document.getElementById('totalBudget').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            setTotalBudget();
+        }
+    });
+
+    document.getElementById('expenseDescription').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            addExpense();
+        }
+    });
+
+    document.getElementById('newCategory').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            addNewCategory();
+        }
+    });
+
+    // Real-time expense amount validation
+    document.getElementById('expenseAmount').addEventListener('change', function() {
+        const amount = parseFloat(this.value);
+        const category = document.getElementById('expenseCategory').value;
+        
+        if (amount && isAnomalousExpense(amount, category)) {
+            document.getElementById('expenseWarning').textContent = 
+                `Warning: This amount is unusually high for ${category} category`;
+            document.getElementById('expenseWarning').style.display = 'block';
+        } else {
+            document.getElementById('expenseWarning').style.display = 'none';
+        }
+    });
+
+    // Window resize event for chart responsiveness
+    let resizeTimeout;
+    window.addEventListener('resize', function() {
+        clearTimeout(resizeTimeout);
+        resizeTimeout = setTimeout(function() {
+            updateCharts();
+        }, 250);
+    });
+
+    // Export button hover effect
+    document.querySelector('.export-button').addEventListener('mouseenter', function() {
+        this.style.transform = 'scale(1.05)';
+    });
+
+    document.querySelector('.export-button').addEventListener('mouseleave', function() {
+        this.style.transform = 'scale(1)';
+    });
+
+    // Clear form fields button
+    document.getElementById('clearFields').addEventListener('click', function() {
+        document.getElementById('expenseAmount').value = '';
+        document.getElementById('expenseDescription').value = '';
+        document.getElementById('expenseWarning').style.display = 'none';
+        document.getElementById('mlPredictions').style.display = 'none';
+    });
+
+    // Auto-save to localStorage
+    ['expenseAmount', 'expenseDescription', 'expenseCategory'].forEach(id => {
+        document.getElementById(id).addEventListener('change', function() {
+            localStorage.setItem(id, this.value);
+        });
+    });
+
+    // Restore saved form data if exists
+    const restoreFormData = () => {
+        ['expenseAmount', 'expenseDescription', 'expenseCategory'].forEach(id => {
+            const savedValue = localStorage.getItem(id);
+            if (savedValue) {
+                document.getElementById(id).value = savedValue;
+            }
+        });
+    };
+    restoreFormData();
 });
