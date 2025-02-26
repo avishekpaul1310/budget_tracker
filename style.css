@@ -215,12 +215,14 @@ button:hover {
 }
 
 /* ML Predictions */
+
 .ml-predictions {
-    background-color: #f8fafc;
+    background-color: #eef7fd;
     padding: 20px;
     border-radius: 8px;
     margin-top: 15px;
-    border-left: 4px solid #3498db
+    border-left: 4px solid #2980b9;
+    transition: opacity 0.3s ease;
 }
 
 .prediction-details {
@@ -230,6 +232,16 @@ button:hover {
 
 .prediction-details p {
     margin: 8px 0;
+}
+
+/* New prediction message style */
+.prediction-message {
+    font-style: italic;
+    margin-top: 12px !important;
+    padding: 6px 10px;
+    background-color: rgba(41, 128, 185, 0.1);
+    border-radius: 4px;
+    font-size: 0.9em;
 }
 
 /* Warning Messages */
@@ -361,6 +373,10 @@ button:hover {
         color: #ffffff;
     }
 
+    .confidence-bar-container {
+        background-color: #2d2d2d;
+    }
+
     .highlight-section {
         border: 2px dashed #3498db;
         box-shadow: 0 0 15px rgba(52, 152, 219, 0.7);
@@ -369,6 +385,16 @@ button:hover {
     .notification {
         background-color: rgba(231, 76, 60, 0.2);
         border-left: 4px solid #e74c3c;
+    }
+
+    .ml-predictions {
+        background-color: #1a2733;
+        border-left: 4px solid #3498db;
+    }
+
+    .prediction-message {
+        background-color: rgba(52, 152, 219, 0.15);
+        color: #a3d4ff;
     }
 
     .budget-input-section,
@@ -519,6 +545,7 @@ button:hover {
         background-color: #ecf0f1;
         border-radius: 4px;
         margin-top: 5px;
+        margin-bottom: 15px;
         overflow: hidden;
     }
     
@@ -529,6 +556,7 @@ button:hover {
         border-radius: 4px;
         transition: width 0.5s ease, background-color 0.3s ease;
     }
+    
 
     .highlight-section {
         animation: pulse 2s infinite;
