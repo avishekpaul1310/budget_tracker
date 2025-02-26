@@ -234,6 +234,22 @@ button:hover {
     margin: 8px 0;
 }
 
+.prediction-main-info {
+    margin-bottom: 10px;
+}
+
+.prediction-range {
+    background-color: rgba(41, 128, 185, 0.1);
+    padding: 8px 12px;
+    border-radius: 4px;
+    margin: 12px 0;
+}
+
+.range-label {
+    font-weight: 500;
+    color: #3498db;
+}
+
 /* New prediction message style */
 .prediction-message {
     font-style: italic;
@@ -242,6 +258,29 @@ button:hover {
     background-color: rgba(41, 128, 185, 0.1);
     border-radius: 4px;
     font-size: 0.9em;
+}
+
+.prediction-trend {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed #ccc;
+    font-size: 0.9em;
+}
+
+/* Trend indicators */
+.trend-up {
+    color: #e74c3c;
+    font-weight: 500;
+}
+
+.trend-down {
+    color: #27ae60;
+    font-weight: 500;
+}
+
+.trend-stable {
+    color: #f39c12;
+    font-weight: 500;
 }
 
 /* Warning Messages */
@@ -395,6 +434,10 @@ button:hover {
     .prediction-message {
         background-color: rgba(52, 152, 219, 0.15);
         color: #a3d4ff;
+    }
+
+    .prediction-trend {
+        border-top: 1px dashed #444;
     }
 
     .budget-input-section,
