@@ -7,6 +7,7 @@ let mlModel = {
     monthlyPatterns: {},
     trained: false
 };
+// Add new global variable for categories
 let expenseCategories = [
     "equipment",
     "salaries",
@@ -30,9 +31,50 @@ function setTotalBudget() {
     }
 }
 
+// Add new category
+function addNewCategory() {
+    const newCategory = document.getElementById('newCategory').value.trim().toLowerCase();
+    if (newCategory && !expenseCategories.includes(newCategory)) {
+        expenseCategories.push(newCategory);
+        updateCategoryDropdowns();
+        document.getElementById('newCategory').value = '';
+    } else {
+        alert('Please enter a valid unique category name');
+    }
+}
+
+// Update category dropdowns
+function updateCategoryDropdowns() {
+    const categorySelect = document.getElementById('expenseCategory');
+    const filterCategory = document.getElementById('filterCategory');
+    
+    // Store current selection
+    const currentCategory = categorySelect.value;
+    const currentFilter = filterCategory.value;
+    
+    // Clear existing options
+    categorySelect.innerHTML = '';
+    filterCategory.innerHTML = '<option value="all">All Categories</option>';
+    
+    // Add categories to both dropdowns
+    expenseCategories.forEach(category => {
+        categorySelect.add(new Option(category, category));
+        filterCategory.add(new Option(category, category));
+    });
+    
+    // Restore selection if it still exists
+    if (expenseCategories.includes(currentCategory)) {
+        categorySelect.value = currentCategory;
+    }
+    
+    if (currentFilter === 'all' || expenseCategories.includes(currentFilter)) {
+        filterCategory.value = currentFilter;
+    }
+}
+
 // Train the statistical model
 function trainModel() {
-    if (expenses.length < 5) return false;
+    if (expenses.length < 2) return false;
     
     const categoryStats = {};
     expenses.forEach(expense => {
@@ -61,34 +103,6 @@ function trainModel() {
     return true;
 }
 
-// Add new function to manage categories
-function addNewCategory() {
-    const newCategory = document.getElementById('newCategory').value.trim().toLowerCase();
-    if (newCategory && !expenseCategories.includes(newCategory)) {
-        expenseCategories.push(newCategory);
-        updateCategoryDropdowns();
-        document.getElementById('newCategory').value = '';
-    } else {
-        alert('Please enter a valid unique category name');
-    }
-}
-
-// Update category dropdowns
-function updateCategoryDropdowns() {
-    const categorySelect = document.getElementById('expenseCategory');
-    const filterCategory = document.getElementById('filterCategory');
-    
-    // Clear existing options
-    categorySelect.innerHTML = '';
-    filterCategory.innerHTML = '<option value="all">All Categories</option>';
-    
-    // Add categories to both dropdowns
-    expenseCategories.forEach(category => {
-        categorySelect.add(new Option(category, category));
-        filterCategory.add(new Option(category, category));
-    });
-}
-
 // Predict expense for a category
 function predictExpense(category) {
     if (!mlModel.trained) {
@@ -107,23 +121,38 @@ function predictExpense(category) {
 // Calculate prediction confidence
 function calculateConfidence(category) {
     const categoryExpenses = expenses.filter(e => e.category === category);
-    return Math.min(100, (categoryExpenses.length / 5) * 100);
+    // More data = more confidence, max at 100%
+    return Math.min(100, (categoryExpenses.length / 3) * 100);
 }
 
 // Calculate suggested maximum amount
 function calculateSuggestedMax(category) {
     if (!mlModel.categoryAverages[category]) return 0;
-    return mlModel.categoryAverages[category] + (2 * (mlModel.monthlyPatterns[category] || 0));
+    return mlModel.categoryAverages[category] + (1.5 * (mlModel.monthlyPatterns[category] || 0));
 }
 
-// Check for anomalous expenses
+// Check for anomalous expenses - IMPROVED to detect higher or lower
 function isAnomalousExpense(amount, category) {
-    if (!mlModel.trained) return false;
+    if (!mlModel.trained) return { isAnomalous: false };
     
     const avg = mlModel.categoryAverages[category];
     const stdDev = mlModel.monthlyPatterns[category];
     
-    return Math.abs(amount - avg) > (2 * stdDev);
+    if (!avg || !stdDev) return { isAnomalous: false };
+    
+    const deviation = Math.abs(amount - avg);
+    const isAnomalous = deviation > (1.5 * stdDev);
+    const isHigher = amount > avg;
+    
+    return { 
+        isAnomalous, 
+        isHigher, 
+        typicalRange: {
+            min: Math.max(0, avg - stdDev).toFixed(2),
+            avg: avg.toFixed(2),
+            max: (avg + stdDev).toFixed(2)
+        }
+    };
 }
 
 // Add expense with ML integration
@@ -134,16 +163,23 @@ function addExpense() {
 
     if (amount > 0 && description) {
         // Check for anomalous expense
-        if (isAnomalousExpense(amount, category)) {
-            const proceed = confirm(`This expense appears unusual for this category. The typical range is around $${mlModel.categoryAverages[category].toFixed(2)}. Do you want to proceed?`);
+        const anomalyCheck = isAnomalousExpense(amount, category);
+        if (anomalyCheck.isAnomalous) {
+            let message = anomalyCheck.isHigher ? 
+                `This expense appears unusually HIGH for this category. The typical range is around $${anomalyCheck.typicalRange.avg} (±$${anomalyCheck.typicalRange.min}-$${anomalyCheck.typicalRange.max}).` : 
+                `This expense appears unusually LOW for this category. The typical range is around $${anomalyCheck.typicalRange.avg} (±$${anomalyCheck.typicalRange.min}-$${anomalyCheck.typicalRange.max}).`;
+            
+            const proceed = confirm(message + " Do you want to proceed?");
             if (!proceed) return;
         }
 
         const expense = {
+            id: Date.now(), // Add unique ID for deletion
             category,
             amount,
             description,
-            date: new Date().toLocaleDateString()
+            date: new Date().toLocaleDateString(),
+            isAnomalous: anomalyCheck?.isAnomalous || false
         };
 
         expenses.push(expense);
@@ -152,6 +188,7 @@ function addExpense() {
         updateExpenseList();
         updateCharts();
         provideBudgetSuggestions();
+        updateExpenseSummary();
 
         // Clear input fields
         document.getElementById('expenseAmount').value = '';
@@ -159,6 +196,81 @@ function addExpense() {
     } else {
         alert('Please enter valid expense details');
     }
+}
+
+function clearFields() {
+    document.getElementById('expenseAmount').value = '';
+    document.getElementById('expenseDescription').value = '';
+    document.getElementById('expenseWarning').style.display = 'none';
+    document.getElementById('mlPredictions').style.display = 'none';
+    
+    // Clear local storage for these fields
+    localStorage.removeItem('expenseAmount');
+    localStorage.removeItem('expenseDescription');
+}
+
+// NEW: Delete expense function
+function deleteExpense(id) {
+    if (confirm("Are you sure you want to delete this expense?")) {
+        expenses = expenses.filter(expense => expense.id !== id);
+        trainModel(); // Retrain model with new data
+        updateBudgetDisplay();
+        updateExpenseList();
+        updateCharts();
+        provideBudgetSuggestions();
+        updateExpenseSummary();
+    }
+}
+
+// Add function to export data
+function exportExpenseData() {
+    const data = {
+        totalBudget,
+        expenses,
+        categories: expenseCategories,
+        exportDate: new Date().toISOString()
+    };
+    
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'budget-tracker-export.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+// Filter and sort expenses function
+function filterAndSortExpenses() {
+    const filterCategory = document.getElementById('filterCategory').value;
+    const sortBy = document.getElementById('sortBy').value;
+    let filteredExpenses = [...expenses];
+    
+    // Apply category filter
+    if (filterCategory !== 'all') {
+        filteredExpenses = filteredExpenses.filter(e => e.category === filterCategory);
+    }
+    
+    // Apply sorting
+    switch(sortBy) {
+        case 'date-desc':
+            filteredExpenses.sort((a, b) => new Date(b.date) - new Date(a.date));
+            break;
+        case 'date-asc':
+            filteredExpenses.sort((a, b) => new Date(a.date) - new Date(b.date));
+            break;
+        case 'amount-desc':
+            filteredExpenses.sort((a, b) => b.amount - a.amount);
+            break;
+        case 'amount-asc':
+            filteredExpenses.sort((a, b) => a.amount - b.amount);
+            break;
+    }
+    
+    updateExpenseList(filteredExpenses);
+    updateExpenseSummary(filteredExpenses);
 }
 
 // Update budget display
@@ -173,7 +285,7 @@ function updateBudgetDisplay() {
     
     const progressBar = document.getElementById('budgetProgress');
     progressBar.style.width = `${Math.min(budgetUtilization, 100)}%`;
-    progressBar.style.backgroundColor = budgetUtilization > 90 ? '#e74c3c' : '#2ecc71';
+    progressBar.style.backgroundColor = budgetUtilization > 90 ? '#e74c3c' : '#27ae60';
 }
 
 // Calculate total expenses
@@ -181,7 +293,36 @@ function calculateTotalExpenses() {
     return expenses.reduce((total, expense) => total + expense.amount, 0);
 }
 
-// Update charts
+// Update expense list with better formatting and delete option
+function updateExpenseList(expensesToShow = expenses) {
+    const expenseList = document.getElementById('expenseList');
+    expenseList.innerHTML = '';
+
+    if (expensesToShow.length === 0) {
+        expenseList.innerHTML = '<div class="no-expenses">No expenses to display</div>';
+        return;
+    }
+
+    expensesToShow.forEach((expense, index) => {
+        const expenseElement = document.createElement('div');
+        expenseElement.className = `expense-item ${index % 2 === 0 ? 'even' : 'odd'} ${expense.isAnomalous ? 'anomalous' : ''}`;
+        expenseElement.innerHTML = `
+            <div class="expense-details">
+                <div class="expense-date-cat">${expense.date} - <span class="category-tag">${expense.category}</span></div>
+                <div class="expense-desc">${expense.description}</div>
+            </div>
+            <div class="expense-amount-actions">
+                <span class="expense-amount">$${expense.amount.toFixed(2)}</span>
+                <button class="delete-expense" onclick="deleteExpense(${expense.id})">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </div>
+        `;
+        expenseList.appendChild(expenseElement);
+    });
+}
+
+// Update charts with better visibility and contrast
 function updateCharts() {
     const ctx = document.getElementById('expensePieChart');
     
@@ -194,50 +335,97 @@ function updateCharts() {
         categoryTotals[expense.category] = (categoryTotals[expense.category] || 0) + expense.amount;
     });
 
+    // Improved high-contrast colors
+    const chartColors = [
+        '#2980b9', // Strong Blue
+        '#27ae60', // Strong Green
+        '#c0392b', // Strong Red
+        '#f39c12', // Strong Orange
+        '#8e44ad', // Strong Purple
+        '#16a085', // Strong Teal
+        '#d35400', // Strong Pumpkin
+        '#2c3e50', // Strong Navy
+        '#e74c3c', // Strong Crimson
+        '#1abc9c'  // Strong Turquoise
+    ];
+
     pieChart = new Chart(ctx, {
         type: 'pie',
         data: {
             labels: Object.keys(categoryTotals),
             datasets: [{
                 data: Object.values(categoryTotals),
-                backgroundColor: [
-                    '#2ecc71',
-                    '#3498db',
-                    '#e74c3c',
-                    '#f1c40f'
-                ]
+                backgroundColor: chartColors,
+                borderColor: '#ffffff',
+                borderWidth: 2
             }]
         },
         options: {
             responsive: true,
             plugins: {
+                legend: {
+                    position: 'right',
+                    labels: {
+                        font: {
+                            size: 16,
+                            weight: 'bold'
+                        },
+                        padding: 20,
+                        color: function(context) {
+                            // Return the color of the category
+                            return chartColors[context.dataIndex];
+                        }
+                    },
+                    onClick: function(e, legendItem, legend) {
+                        // Keep default behavior
+                        Chart.defaults.plugins.legend.onClick.call(this, e, legendItem, legend);
+                    }
+                },
                 title: {
                     display: true,
-                    text: 'Expense Distribution'
+                    text: 'Expense Distribution',
+                    font: {
+                        size: 20,
+                        weight: 'bold'
+                    },
+                    padding: {
+                        top: 10,
+                        bottom: 20
+                    }
+                },
+                tooltip: {
+                    titleFont: {
+                        size: 16,
+                        weight: 'bold'
+                    },
+                    bodyFont: {
+                        size: 14
+                    },
+                    callbacks: {
+                        label: function(context) {
+                            const total = Object.values(categoryTotals).reduce((a, b) => a + b, 0);
+                            const value = context.raw;
+                            const percentage = ((value / total) * 100).toFixed(1);
+                            return `${context.label}: $${value.toFixed(2)} (${percentage}%)`;
+                        }
+                    }
                 }
             }
         }
     });
 }
 
-// Update expense list
-function updateExpenseList(expensesToShow = expenses) {
-    const expenseList = document.getElementById('expenseList');
-    expenseList.innerHTML = '';
-
-    expensesToShow.forEach((expense) => {
-        const expenseElement = document.createElement('div');
-        expenseElement.className = 'expense-item';
-        expenseElement.innerHTML = `
-            <span>${expense.date} - ${expense.category}: ${expense.description}</span>
-            <span>$${expense.amount.toFixed(2)}</span>
-        `;
-        expenseList.appendChild(expenseElement);
-    });
-}
-
+// Update expense summary - FIXED
 function updateExpenseSummary(expensesToAnalyze = expenses) {
     const summaryDiv = document.getElementById('expenseSummary');
+    
+    if (expensesToAnalyze.length === 0) {
+        summaryDiv.innerHTML = `
+            <h3>Expense Summary</h3>
+            <p>No expenses recorded yet.</p>
+        `;
+        return;
+    }
     
     const totalAmount = expensesToAnalyze.reduce((sum, exp) => sum + exp.amount, 0);
     const categoryTotals = expensesToAnalyze.reduce((acc, exp) => {
@@ -263,6 +451,7 @@ function updateExpenseSummary(expensesToAnalyze = expenses) {
 }
 
 // Provide budget suggestions with ML insights
+
 function provideBudgetSuggestions() {
     const totalExpenses = calculateTotalExpenses();
     const remainingBudget = totalBudget - totalExpenses;
@@ -317,59 +506,7 @@ function provideBudgetSuggestions() {
     suggestionsDiv.innerHTML = suggestionContent + mlInsights;
 }
 
-function exportExpenseData() {
-    const data = {
-        totalBudget,
-        expenses,
-        categories: expenseCategories,
-        exportDate: new Date().toISOString()
-    };
-    
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'budget-tracker-export.json';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-}
-
-// Add function to filter and sort expenses
-function filterAndSortExpenses() {
-    const filterCategory = document.getElementById('filterCategory').value;
-    const sortBy = document.getElementById('sortBy').value;
-    const filteredExpenses = [...expenses];
-    
-    // Apply category filter
-    if (filterCategory !== 'all') {
-        filteredExpenses.splice(0, filteredExpenses.length, 
-            ...filteredExpenses.filter(e => e.category === filterCategory)
-        );
-    }
-    
-    // Apply sorting
-    switch(sortBy) {
-        case 'date-desc':
-            filteredExpenses.sort((a, b) => new Date(b.date) - new Date(a.date));
-            break;
-        case 'date-asc':
-            filteredExpenses.sort((a, b) => new Date(a.date) - new Date(b.date));
-            break;
-        case 'amount-desc':
-            filteredExpenses.sort((a, b) => b.amount - a.amount);
-            break;
-        case 'amount-asc':
-            filteredExpenses.sort((a, b) => a.amount - b.amount);
-            break;
-    }
-    
-    updateExpenseList(filteredExpenses);
-    updateExpenseSummary(filteredExpenses);
-}
-
-// Add event listener for category selection
+// Event listeners section - Complete
 document.addEventListener('DOMContentLoaded', () => {
     // Initialize displays and charts
     updateBudgetDisplay();
@@ -378,67 +515,126 @@ document.addEventListener('DOMContentLoaded', () => {
     updateCategoryDropdowns();
     updateExpenseSummary();
     
-    // Category selection event listener
-    document.getElementById('expenseCategory').addEventListener('change', function() {
-        const selectedCategory = this.value;
-        const prediction = predictExpense(selectedCategory);
-        
-        if (prediction) {
-            document.getElementById('mlPredictions').style.display = 'block';
-            document.getElementById('expectedAmount').textContent = `$${prediction.expectedAmount.toFixed(2)}`;
-            document.getElementById('predictionConfidence').textContent = `${prediction.confidence.toFixed(1)}%`;
-            document.getElementById('suggestedMax').textContent = `$${prediction.suggestedMax.toFixed(2)}`;
-        } else {
-            document.getElementById('mlPredictions').style.display = 'none';
-        }
-    });
-
-    // Filter and sort event listeners
-    document.getElementById('filterCategory').addEventListener('change', filterAndSortExpenses);
-    document.getElementById('sortBy').addEventListener('change', filterAndSortExpenses);
-
-    // Input validation for budget and expense amounts
+    // Budget input events
     document.getElementById('totalBudget').addEventListener('input', function() {
+        // Validate to only allow numbers and decimal point
         this.value = this.value.replace(/[^0-9.]/g, '');
     });
-
-    document.getElementById('expenseAmount').addEventListener('input', function() {
-        this.value = this.value.replace(/[^0-9.]/g, '');
-    });
-
-    // Enter key support for inputs
+    
     document.getElementById('totalBudget').addEventListener('keypress', function(e) {
         if (e.key === 'Enter') {
             setTotalBudget();
         }
     });
-
-    document.getElementById('expenseDescription').addEventListener('keypress', function(e) {
-        if (e.key === 'Enter') {
-            addExpense();
-        }
-    });
-
+    
+    // Category management events
     document.getElementById('newCategory').addEventListener('keypress', function(e) {
         if (e.key === 'Enter') {
             addNewCategory();
         }
     });
-
-    // Real-time expense amount validation
-    document.getElementById('expenseAmount').addEventListener('change', function() {
+    
+    // Expense input events
+    const expenseCategory = document.getElementById('expenseCategory');
+    const expenseAmount = document.getElementById('expenseAmount');
+    const expenseDesc = document.getElementById('expenseDescription');
+    
+    // Update predictions when category changes
+    expenseCategory.addEventListener('change', function() {
+        updatePredictions(this.value);
+    });
+    
+    // Validate expense amount input
+    expenseAmount.addEventListener('input', function() {
+        // Validate to only allow numbers and decimal point
+        this.value = this.value.replace(/[^0-9.]/g, '');
+    });
+    
+    // Update anomaly detection when amount changes
+    expenseAmount.addEventListener('input', function() {
         const amount = parseFloat(this.value);
-        const category = document.getElementById('expenseCategory').value;
+        const category = expenseCategory.value;
         
-        if (amount && isAnomalousExpense(amount, category)) {
-            document.getElementById('expenseWarning').textContent = 
-                `Warning: This amount is unusually high for ${category} category`;
-            document.getElementById('expenseWarning').style.display = 'block';
-        } else {
-            document.getElementById('expenseWarning').style.display = 'none';
+        if (amount && category) {
+            const anomalyCheck = isAnomalousExpense(amount, category);
+            const warningEl = document.getElementById('expenseWarning');
+            
+            if (anomalyCheck.isAnomalous) {
+                let message = anomalyCheck.isHigher ? 
+                    `This amount appears unusually HIGH for ${category}. Typical: $${anomalyCheck.typicalRange.avg}.` : 
+                    `This amount appears unusually LOW for ${category}. Typical: $${anomalyCheck.typicalRange.avg}.`;
+                
+                warningEl.textContent = message;
+                warningEl.style.display = 'block';
+            } else {
+                warningEl.style.display = 'none';
+            }
         }
     });
-
+    
+    // Enter key support for expense description
+    expenseDesc.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            addExpense();
+        }
+    });
+    
+    // Clear fields button
+    document.getElementById('clearFields').addEventListener('click', function() {
+        clearFields();
+    });
+    
+    // Filter and sort events
+    const filterCategoryElement = document.getElementById('filterCategory');
+    const sortByElement = document.getElementById('sortBy');
+    
+    if (filterCategoryElement) {
+        filterCategoryElement.addEventListener('change', filterAndSortExpenses);
+    }
+    
+    if (sortByElement) {
+        sortByElement.addEventListener('change', filterAndSortExpenses);
+    }
+    
+    // Export button effects
+    const exportButton = document.querySelector('.export-button');
+    if (exportButton) {
+        exportButton.addEventListener('mouseenter', function() {
+            this.style.transform = 'scale(1.05)';
+        });
+        
+        exportButton.addEventListener('mouseleave', function() {
+            this.style.transform = 'scale(1)';
+        });
+    }
+    
+    // Auto-save form data to localStorage
+    ['expenseAmount', 'expenseDescription', 'expenseCategory'].forEach(id => {
+        const element = document.getElementById(id);
+        if (element) {
+            element.addEventListener('change', function() {
+                localStorage.setItem(id, this.value);
+            });
+        }
+    });
+    
+    // Restore saved form data if exists
+    const restoreFormData = () => {
+        ['expenseAmount', 'expenseDescription', 'expenseCategory'].forEach(id => {
+            const savedValue = localStorage.getItem(id);
+            const element = document.getElementById(id);
+            if (savedValue && element) {
+                element.value = savedValue;
+            }
+        });
+    };
+    restoreFormData();
+    
+    // Initial predictions update if category is pre-selected
+    if (expenseCategory && expenseCategory.value) {
+        updatePredictions(expenseCategory.value);
+    }
+    
     // Window resize event for chart responsiveness
     let resizeTimeout;
     window.addEventListener('resize', function() {
@@ -447,39 +643,67 @@ document.addEventListener('DOMContentLoaded', () => {
             updateCharts();
         }, 250);
     });
-
-    // Export button hover effect
-    document.querySelector('.export-button').addEventListener('mouseenter', function() {
-        this.style.transform = 'scale(1.05)';
-    });
-
-    document.querySelector('.export-button').addEventListener('mouseleave', function() {
-        this.style.transform = 'scale(1)';
-    });
-
-    // Clear form fields button
-    document.getElementById('clearFields').addEventListener('click', function() {
-        document.getElementById('expenseAmount').value = '';
-        document.getElementById('expenseDescription').value = '';
-        document.getElementById('expenseWarning').style.display = 'none';
-        document.getElementById('mlPredictions').style.display = 'none';
-    });
-
-    // Auto-save to localStorage
-    ['expenseAmount', 'expenseDescription', 'expenseCategory'].forEach(id => {
-        document.getElementById(id).addEventListener('change', function() {
-            localStorage.setItem(id, this.value);
+    
+    // Theme toggle (if you have a theme toggle button)
+    const themeToggle = document.getElementById('themeToggle');
+    if (themeToggle) {
+        themeToggle.addEventListener('click', function() {
+            document.body.classList.toggle('dark-mode');
+            const isDarkMode = document.body.classList.contains('dark-mode');
+            localStorage.setItem('darkMode', isDarkMode);
+            
+            // Update charts for better visibility in current theme
+            updateCharts();
         });
-    });
-
-    // Restore saved form data if exists
-    const restoreFormData = () => {
-        ['expenseAmount', 'expenseDescription', 'expenseCategory'].forEach(id => {
-            const savedValue = localStorage.getItem(id);
-            if (savedValue) {
-                document.getElementById(id).value = savedValue;
-            }
-        });
-    };
-    restoreFormData();
+        
+        // Check for saved theme preference
+        if (localStorage.getItem('darkMode') === 'true') {
+            document.body.classList.add('dark-mode');
+        }
+    }
+    
+    // Add sample data button (if you have one)
+    const sampleDataButton = document.getElementById('addSampleData');
+    if (sampleDataButton) {
+        sampleDataButton.addEventListener('click', addSampleData);
+    }
 });
+
+// Helper function to add sample data for testing (optional)
+function addSampleData() {
+    const sampleExpenses = [
+        { category: 'equipment', amount: 250, description: 'Office computer' },
+        { category: 'salaries', amount: 1200, description: 'Contract work' },
+        { category: 'marketing', amount: 350, description: 'Social media ads' },
+        { category: 'equipment', amount: 120, description: 'Printer' },
+        { category: 'miscellaneous', amount: 75, description: 'Office supplies' }
+    ];
+    
+    if (totalBudget === 0) {
+        setTotalBudget(3000); // Set a default budget
+    }
+    
+    sampleExpenses.forEach(exp => {
+        const expense = {
+            id: Date.now() + Math.floor(Math.random() * 1000),
+            category: exp.category,
+            amount: exp.amount,
+            description: exp.description,
+            date: new Date().toLocaleDateString(),
+            isAnomalous: false
+        };
+        expenses.push(expense);
+        
+        // Wait a bit between adding expenses
+        setTimeout(() => {}, 50);
+    });
+    
+    trainModel();
+    updateBudgetDisplay();
+    updateExpenseList();
+    updateCharts();
+    provideBudgetSuggestions();
+    updateExpenseSummary();
+    
+    alert('Sample data added successfully!');
+}
