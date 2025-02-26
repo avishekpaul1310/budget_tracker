@@ -69,35 +69,97 @@ function updateCategoryDropdowns() {
 
 // Train the statistical model
 function trainModel() {
-    if (expenses.length < 1) return false;  // Changed from 5 to 1 - will work with any data
+    if (expenses.length < 1) return false;
     
     const categoryStats = {};
+    
+    // First, organize expenses by category and collect timestamps
     expenses.forEach(expense => {
         if (!categoryStats[expense.category]) {
             categoryStats[expense.category] = {
-                amounts: [],
+                expenses: [],
                 total: 0,
                 count: 0
             };
         }
-        categoryStats[expense.category].amounts.push(expense.amount);
+        
+        // Convert string date to timestamp for sorting
+        const expenseDate = new Date(expense.date).getTime();
+        categoryStats[expense.category].expenses.push({
+            amount: expense.amount,
+            date: expenseDate
+        });
         categoryStats[expense.category].total += expense.amount;
         categoryStats[expense.category].count++;
     });
 
     Object.keys(categoryStats).forEach(category => {
-        mlModel.categoryAverages[category] = categoryStats[category].total / categoryStats[category].count;
+        // Sort expenses by date (most recent first)
+        categoryStats[category].expenses.sort((a, b) => b.date - a.date);
         
-        // If we have only one value, use a default deviation estimate
-        if (categoryStats[category].amounts.length === 1) {
-            // Use 20% of the value as a default standard deviation
-            mlModel.monthlyPatterns[category] = mlModel.categoryAverages[category] * 0.2;
-        } else {
-            // Calculate standard deviation as before
-            const mean = mlModel.categoryAverages[category];
-            const squareDiffs = categoryStats[category].amounts.map(amount => Math.pow(amount - mean, 2));
+        const expensesList = categoryStats[category].expenses;
+        
+        // Calculate weighted average based on recency
+        let weightedSum = 0;
+        let weightSum = 0;
+        
+        expensesList.forEach((expense, index) => {
+            // More recent expenses get higher weights (exponential decay)
+            // Weight = 1 / (position + 1) for recency weighting
+            const weight = 1 / (index + 1);
+            weightedSum += expense.amount * weight;
+            weightSum += weight;
+        });
+        
+        // Calculate weighted average
+        mlModel.categoryAverages[category] = weightedSum / weightSum;
+        
+        // Calculate variance and standard deviation with outlier handling
+        const amounts = expensesList.map(e => e.amount);
+        const mean = mlModel.categoryAverages[category];
+        
+        // Calculate quartiles for outlier detection
+        amounts.sort((a, b) => a - b);
+        const q1 = amounts[Math.floor(amounts.length * 0.25)];
+        const q3 = amounts[Math.floor(amounts.length * 0.75)];
+        const iqr = q3 - q1;
+        
+        // Define outlier bounds (using 1.5 * IQR method)
+        const lowerBound = q1 - (1.5 * iqr);
+        const upperBound = q3 + (1.5 * iqr);
+        
+        // Filter out outliers for standard deviation calculation
+        const filteredAmounts = amounts.filter(amount => 
+            amount >= lowerBound && amount <= upperBound);
+        
+        // If we have enough non-outlier values, use those for standard deviation
+        if (filteredAmounts.length >= 3) {
+            const filteredMean = filteredAmounts.reduce((a, b) => a + b) / filteredAmounts.length;
+            const squareDiffs = filteredAmounts.map(amount => Math.pow(amount - filteredMean, 2));
             const avgSquareDiff = squareDiffs.reduce((a, b) => a + b) / squareDiffs.length;
             mlModel.monthlyPatterns[category] = Math.sqrt(avgSquareDiff);
+        } else {
+            // If not enough data after outlier removal, use all data but with a buffer
+            const squareDiffs = amounts.map(amount => Math.pow(amount - mean, 2));
+            const avgSquareDiff = squareDiffs.reduce((a, b) => a + b) / squareDiffs.length;
+            mlModel.monthlyPatterns[category] = Math.sqrt(avgSquareDiff);
+        }
+        
+        // Add trend detection (increasing or decreasing)
+        if (expensesList.length >= 3) {
+            // Compare recent expenses to earlier ones to detect trends
+            const recentExpenses = expensesList.slice(0, Math.ceil(expensesList.length / 2));
+            const olderExpenses = expensesList.slice(Math.ceil(expensesList.length / 2));
+            
+            const recentAvg = recentExpenses.reduce((sum, e) => sum + e.amount, 0) / recentExpenses.length;
+            const olderAvg = olderExpenses.reduce((sum, e) => sum + e.amount, 0) / olderExpenses.length;
+            
+            mlModel.trends = mlModel.trends || {};
+            mlModel.trends[category] = {
+                direction: recentAvg > olderAvg ? 'increasing' : 
+                           recentAvg < olderAvg ? 'decreasing' : 'stable',
+                percentage: olderAvg > 0 ? ((recentAvg - olderAvg) / olderAvg) * 100 : 0
+            };
         }
     });
 
@@ -105,26 +167,85 @@ function trainModel() {
     return true;
 }
 
-// Predict expense for a category
 function predictExpense(category) {
     if (!mlModel.trained) {
         if (!trainModel()) return null;
     }
 
-    const prediction = {
-        expectedAmount: mlModel.categoryAverages[category] || 0,
-        confidence: calculateConfidence(category),
-        suggestedMax: calculateSuggestedMax(category)
-    };
+    const avg = mlModel.categoryAverages[category] || 0;
+    const stdDev = mlModel.monthlyPatterns[category] || 0;
+    const confidence = calculateConfidence(category);
+    
+    // Get trend info if available
+    const trend = mlModel.trends && mlModel.trends[category] ? 
+                  mlModel.trends[category] : { direction: 'stable', percentage: 0 };
+    
+    // Adjust expected amount based on trend
+    let expectedAmount = avg;
+    let trendMultiplier = 0;
+    
+    // Only apply trend adjustment if confidence is reasonable
+    if (confidence > 30 && trend.percentage !== 0) {
+        // Apply a portion of the trend to prediction
+        trendMultiplier = Math.min(Math.abs(trend.percentage) / 100, 0.2); // Cap at 20% adjustment
+        
+        if (trend.direction === 'increasing') {
+            expectedAmount *= (1 + trendMultiplier);
+        } else if (trend.direction === 'decreasing') {
+            expectedAmount *= (1 - trendMultiplier);
+        }
+    }
+    
+    // Calculate prediction ranges based on confidence
+    // Lower confidence = wider range
+    const confidenceFactor = Math.max(1, (100 - confidence) / 25); // 100% confidence = 1x stdDev, 25% confidence = 3x stdDev
+    const rangeMin = Math.max(0, expectedAmount - (confidenceFactor * stdDev));
+    const rangeMax = expectedAmount + (confidenceFactor * stdDev);
 
-    return prediction;
+    return {
+        expectedAmount: expectedAmount,
+        confidence: parseFloat(confidence),
+        suggestedMin: rangeMin,
+        suggestedMax: rangeMax,
+        trend: trend.direction,
+        trendPercentage: Math.abs(trend.percentage).toFixed(1)
+    };
 }
 
-// Calculate prediction confidence
+// Calculate prediction confidence - COMPLETELY REVISED
 function calculateConfidence(category) {
     const categoryExpenses = expenses.filter(e => e.category === category);
-    // More data = more confidence, max at 100%
-    return Math.min(100, (categoryExpenses.length / 3) * 100);
+    const numExpenses = categoryExpenses.length;
+
+    if (numExpenses < 2) return Math.min(100, numExpenses * 20); // Base confidence on number of records for very few records
+
+    // Calculate mean (average)
+    const mean = categoryExpenses.reduce((sum, e) => sum + e.amount, 0) / numExpenses;
+    
+    if (mean === 0) return 0; // Avoid division by zero
+
+    // Calculate variance (spread of data)
+    const variance = categoryExpenses.reduce((sum, e) => sum + Math.pow(e.amount - mean, 2), 0) / numExpenses;
+
+    // Standard deviation (how much values deviate from the mean)
+    const stdDev = Math.sqrt(variance);
+
+    // Calculate coefficient of variation (CV) - normalized measure of dispersion
+    const cv = stdDev / mean;
+    
+    // CV < 0.1 is very consistent data, CV > 0.3 is highly variable data
+    // Convert to confidence: low CV = high confidence
+    let confidenceFromVariance = Math.max(0, 100 - (cv * 200)); // CV of 0.5 or more gives 0 confidence
+    
+    // Blend variance-based confidence with number of records confidence
+    // More records = more weight on variance-based confidence
+    const recordsConfidence = Math.min(100, numExpenses * 15); // 7+ records = 100% 
+    const blendFactor = Math.min(1, numExpenses / 7);
+    
+    // Final confidence is weighted blend of both metrics
+    const finalConfidence = (confidenceFromVariance * blendFactor) + (recordsConfidence * (1 - blendFactor));
+    
+    return Math.min(100, finalConfidence).toFixed(1);
 }
 
 // Calculate suggested maximum amount
@@ -133,7 +254,8 @@ function calculateSuggestedMax(category) {
     return mlModel.categoryAverages[category] + (1.5 * (mlModel.monthlyPatterns[category] || 0));
 }
 
-// Check for anomalous expenses - IMPROVED to detect higher or lower
+
+// Check for anomalous expenses - COMPLETELY REVISED
 function isAnomalousExpense(amount, category) {
     // Get previous expenses for this category
     const categoryExpenses = expenses.filter(e => e.category === category);
@@ -141,13 +263,14 @@ function isAnomalousExpense(amount, category) {
     // If no expenses for this category yet, not anomalous
     if (categoryExpenses.length === 0) return { isAnomalous: false };
     
-    // If we have just one previous expense, compare directly
+    // If we have just one previous expense, compare directly with a higher tolerance
     if (categoryExpenses.length === 1) {
         const previousAmount = categoryExpenses[0].amount;
         const deviation = Math.abs(amount - previousAmount);
         const percentChange = deviation / previousAmount;
         
         // If more than 50% different than the previous amount, flag as anomalous
+        // This is a higher threshold since we have limited data
         const isAnomalous = percentChange > 0.5;
         const isHigher = amount > previousAmount;
         
@@ -162,27 +285,35 @@ function isAnomalousExpense(amount, category) {
         };
     }
     
-    // Train model if not trained
+    // Otherwise, use statistical methods for anomaly detection
     if (!mlModel.trained) {
-        trainModel();
+        if (!trainModel()) return { isAnomalous: false };
     }
     
-    const avg = mlModel.categoryAverages[category];
-    const stdDev = mlModel.monthlyPatterns[category];
+    // Use our most recent prediction for this category
+    const prediction = predictExpense(category);
+    if (!prediction) return { isAnomalous: false };
     
-    if (!avg || !stdDev) return { isAnomalous: false };
+    const expectedAmount = prediction.expectedAmount;
+    const minExpected = prediction.suggestedMin;
+    const maxExpected = prediction.suggestedMax;
     
-    const deviation = Math.abs(amount - avg);
-    const isAnomalous = deviation > (1.5 * stdDev);
-    const isHigher = amount > avg;
+    // Check if amount falls outside the expected range
+    // Use a dynamic threshold based on confidence
+    const confidenceFactor = Math.max(1, (100 - prediction.confidence) / 25);
+    const lowerThreshold = minExpected / confidenceFactor;
+    const upperThreshold = maxExpected * confidenceFactor;
+    
+    const isAnomalous = amount < lowerThreshold || amount > upperThreshold;
+    const isHigher = amount > expectedAmount;
     
     return { 
         isAnomalous, 
         isHigher, 
         typicalRange: {
-            min: Math.max(0, avg - stdDev).toFixed(2),
-            avg: avg.toFixed(2),
-            max: (avg + stdDev).toFixed(2)
+            min: Number(minExpected).toFixed(2),
+            avg: Number(expectedAmount).toFixed(2),
+            max: Number(maxExpected).toFixed(2)
         }
     };
 }
@@ -487,7 +618,7 @@ function updateExpenseSummary(expensesToAnalyze = expenses) {
     summaryDiv.innerHTML = summaryHTML;
 }
 
-// Update ML predictions 
+// Update ML predictions - COMPLETELY ENHANCED
 function updatePredictions(category) {
     // Check if we have any expenses for this category
     const categoryExpenses = expenses.filter(e => e.category === category);
@@ -500,25 +631,33 @@ function updatePredictions(category) {
     if (categoryExpenses.length === 0) {
         document.getElementById('expectedAmount').textContent = `$0.00`;
         document.getElementById('predictionConfidence').textContent = `0.0%`;
+        document.getElementById('trendIndicator').innerHTML = ''; // Clear trend indicator
+        
+        // Make sure suggestedMin exists and update it
+        const suggestedMinEl = document.getElementById('suggestedMin');
+        if (suggestedMinEl) {
+            suggestedMinEl.textContent = `$0.00`;
+        } else {
+            document.querySelector('.prediction-range').innerHTML = 
+                `<p><span class="range-label">Suggested range:</span> 
+                <span id="suggestedMin">$0.00</span> - <span id="suggestedMax">$0.00</span></p>`;
+        }
+        
         document.getElementById('suggestedMax').textContent = `$0.00`;
         
-        // Add message element if it doesn't exist
-        let messageEl = document.getElementById('predictionMessage');
-        if (!messageEl) {
-            messageEl = document.createElement('p');
-            messageEl.id = 'predictionMessage';
-            messageEl.className = 'prediction-message';
-            document.querySelector('.prediction-details').appendChild(messageEl);
-        }
-        
+        // Update prediction message
+        const messageEl = document.getElementById('predictionMessage');
         messageEl.textContent = `No data yet for "${category}". Add an expense to generate predictions.`;
         
-        // Reset confidence bar if it exists
+        // Clear prediction trend
+        const trendEl = document.getElementById('predictionTrend');
+        trendEl.innerHTML = '';
+        
+        // Reset confidence bar
         const confidenceBar = document.getElementById('confidenceBar');
-        if (confidenceBar) {
-            confidenceBar.style.width = `0%`;
-            confidenceBar.style.backgroundColor = '#e74c3c'; // Low confidence
-        }
+        confidenceBar.style.width = `0%`;
+        confidenceBar.style.backgroundColor = '#e74c3c'; // Low confidence
+        
         return;
     }
     
@@ -526,54 +665,96 @@ function updatePredictions(category) {
     const prediction = predictExpense(category);
     
     if (prediction) {
-        document.getElementById('expectedAmount').textContent = `$${prediction.expectedAmount.toFixed(2)}`;
-        document.getElementById('predictionConfidence').textContent = `${prediction.confidence.toFixed(1)}%`;
-        document.getElementById('suggestedMax').textContent = `$${prediction.suggestedMax.toFixed(2)}`;
+        // Update main prediction values
+        document.getElementById('expectedAmount').textContent = `$${Number(prediction.expectedAmount).toFixed(2)}`;
+        document.getElementById('predictionConfidence').textContent = `${Number(prediction.confidence).toFixed(1)}%`;
         
-        // Add a helpful message based on confidence
-        let messageEl = document.getElementById('predictionMessage');
-        if (!messageEl) {
-            messageEl = document.createElement('p');
-            messageEl.id = 'predictionMessage';
-            messageEl.className = 'prediction-message';
-            document.querySelector('.prediction-details').appendChild(messageEl);
+        // Add trend indicator
+        const trendIndicator = document.getElementById('trendIndicator');
+        if (prediction.trend === 'increasing') {
+            trendIndicator.innerHTML = `<span class="trend-up">▲ ${prediction.trendPercentage}%</span>`;
+            trendIndicator.title = `Expenses in this category have been increasing by ${prediction.trendPercentage}%`;
+        } else if (prediction.trend === 'decreasing') {
+            trendIndicator.innerHTML = `<span class="trend-down">▼ ${prediction.trendPercentage}%</span>`;
+            trendIndicator.title = `Expenses in this category have been decreasing by ${prediction.trendPercentage}%`;
+        } else {
+            trendIndicator.innerHTML = `<span class="trend-stable">◆</span>`;
+            trendIndicator.title = `Expenses in this category have been stable`;
         }
         
-        let message = '';
-        if (prediction.confidence < 40) {
-            message = `Limited data for "${category}". Predictions will improve as you add more expenses.`;
-        } else if (prediction.confidence < 70) {
-            message = `Moderate confidence in "${category}" predictions. Typical spending is around $${prediction.expectedAmount.toFixed(2)}.`;
+        // Update range predictions
+        const suggestedMinEl = document.getElementById('suggestedMin');
+        if (suggestedMinEl) {
+            suggestedMinEl.textContent = `$${Number(prediction.suggestedMin).toFixed(2)}`;
         } else {
-            message = `Strong predictive patterns detected for "${category}". You typically spend $${prediction.expectedAmount.toFixed(2)}.`;
+            document.querySelector('.prediction-range').innerHTML = 
+                `<p><span class="range-label">Suggested range:</span> 
+                <span id="suggestedMin">$${Number(prediction.suggestedMin).toFixed(2)}</span> - 
+                <span id="suggestedMax">$${Number(prediction.suggestedMax).toFixed(2)}</span></p>`;
+        }
+        document.getElementById('suggestedMax').textContent = `$${Number(prediction.suggestedMax).toFixed(2)}`;
+        
+        // Update confidence message
+        const messageEl = document.getElementById('predictionMessage');
+        let message = '';
+        
+        if (prediction.confidence < 40) {
+            message = `Limited data reliability for "${category}". Predictions will improve as you add more consistent expenses.`;
+        } else if (prediction.confidence < 70) {
+            message = `Moderate confidence in "${category}" predictions. You typically spend around $${Number(prediction.expectedAmount).toFixed(2)}.`;
+        } else {
+            message = `Strong predictive patterns detected for "${category}". Expenses are consistently around $${Number(prediction.expectedAmount).toFixed(2)}.`;
         }
         messageEl.textContent = message;
         
-        // Update confidence bar if it exists
-        const confidenceBar = document.getElementById('confidenceBar');
-        if (confidenceBar) {
-            confidenceBar.style.width = `${prediction.confidence}%`;
-            if (prediction.confidence < 40) {
-                confidenceBar.style.backgroundColor = '#e74c3c'; // Low confidence
-            } else if (prediction.confidence < 70) {
-                confidenceBar.style.backgroundColor = '#f39c12'; // Medium confidence
+        // Add detailed trend analysis
+        const trendEl = document.getElementById('predictionTrend');
+        if (categoryExpenses.length >= 3) {
+            let trendHTML = '';
+            
+            if (prediction.trend === 'increasing') {
+                trendHTML = `<p>📈 <strong>Trend analysis:</strong> ${category} expenses are <span class="trend-up">increasing</span> over time.`;
+                trendHTML += ` Consider budgeting higher amounts for future expenses.</p>`;
+            } else if (prediction.trend === 'decreasing') {
+                trendHTML = `<p>📉 <strong>Trend analysis:</strong> ${category} expenses are <span class="trend-down">decreasing</span> over time.`;
+                trendHTML += ` Your cost-saving measures appear to be working.</p>`;
             } else {
-                confidenceBar.style.backgroundColor = '#27ae60'; // High confidence
+                trendHTML = `<p>📊 <strong>Trend analysis:</strong> ${category} expenses are <span class="trend-stable">stable</span> over time.`;
+                trendHTML += ` This category has predictable spending patterns.</p>`;
             }
+            
+            trendEl.innerHTML = trendHTML;
+        } else {
+            trendEl.innerHTML = `<p>⚠️ Add more ${category} expenses to enable trend analysis.</p>`;
+        }
+        
+        // Update confidence bar
+        const confidenceBar = document.getElementById('confidenceBar');
+        confidenceBar.style.width = `${prediction.confidence}%`;
+        if (prediction.confidence < 40) {
+            confidenceBar.style.backgroundColor = '#e74c3c'; // Low confidence
+        } else if (prediction.confidence < 70) {
+            confidenceBar.style.backgroundColor = '#f39c12'; // Medium confidence
+        } else {
+            confidenceBar.style.backgroundColor = '#27ae60'; // High confidence
         }
     } else {
+        // If prediction fails, show error state
         document.getElementById('expectedAmount').textContent = `$0.00`;
         document.getElementById('predictionConfidence').textContent = `0.0%`;
+        document.getElementById('trendIndicator').innerHTML = '';
+        document.getElementById('suggestedMin').textContent = `$0.00`;
         document.getElementById('suggestedMax').textContent = `$0.00`;
         
-        let messageEl = document.getElementById('predictionMessage');
-        if (!messageEl) {
-            messageEl = document.createElement('p');
-            messageEl.id = 'predictionMessage';
-            messageEl.className = 'prediction-message';
-            document.querySelector('.prediction-details').appendChild(messageEl);
-        }
+        const messageEl = document.getElementById('predictionMessage');
         messageEl.textContent = `Error getting predictions for "${category}".`;
+        
+        const trendEl = document.getElementById('predictionTrend');
+        trendEl.innerHTML = '';
+        
+        const confidenceBar = document.getElementById('confidenceBar');
+        confidenceBar.style.width = `0%`;
+        confidenceBar.style.backgroundColor = '#e74c3c';
     }
 }
 
@@ -1073,4 +1254,14 @@ function addSampleData() {
     updateExpenseSummary();
     
     alert('Sample data added successfully!');
+}
+
+// Helper function to format currency consistently
+function formatCurrency(amount) {
+    return new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+    }).format(amount);
 }
