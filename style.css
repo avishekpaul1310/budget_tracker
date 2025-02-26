@@ -28,13 +28,13 @@ h1 {
 }
 
 h2 {
-    color: #34495e;
+    color: #2c3e50;
     margin-bottom: 15px;
     font-size: 1.8em;
 }
 
 h3 {
-    color: #34495e;
+    color: #2c3e50;
     margin-bottom: 12px;
     font-size: 1.4em;
 }
@@ -86,7 +86,7 @@ input:focus, select:focus {
 
 button {
     padding: 12px 20px;
-    background-color: #3498db;
+    background-color: #2980b9;
     color: white;
     border: none;
     border-radius: 6px;
@@ -97,16 +97,17 @@ button {
 }
 
 button:hover {
-    background-color: #2980b9;
+    background-color: #1e6091;
     transform: translateY(-1px);
 }
 
 .secondary-button {
-    background-color: #95a5a6;
+    background-color: #7f8c8d;
+    color: white;
 }
 
 .secondary-button:hover {
-    background-color: #7f8c8d;
+    background-color: #6c7a7a;
 }
 
 /* Progress Bar */
@@ -122,7 +123,7 @@ button:hover {
 .progress-bar {
     height: 100%;
     width: 0%;
-    background-color: #2ecc71;
+    background-color: #27ae60;
     border-radius: 12px;
     transition: width 0.5s ease, background-color 0.3s ease;
 }
@@ -143,7 +144,7 @@ button:hover {
 }
 
 .summary-item p:first-child {
-    color: #7f8c8d;
+    color: #2c3e50;
     font-size: 0.9em;
     margin-bottom: 5px;
 }
@@ -172,7 +173,7 @@ button:hover {
 
 /* Export Button */
 .export-button {
-    background-color: #27ae60;
+    background-color: #219a52;
     transition: all 0.3s ease;
     display: flex;
     align-items: center;
@@ -180,7 +181,7 @@ button:hover {
 }
 
 .export-button:hover {
-    background-color: #219a52;
+    background-color: #1b7f44;
 }
 
 .export-button i {
@@ -206,11 +207,11 @@ button:hover {
 
 /* ML Predictions */
 .ml-predictions {
-    background-color: #f8f9fa;
+    background-color: #eef7fd;
     padding: 20px;
     border-radius: 8px;
     margin-top: 15px;
-    border-left: 4px solid #3498db;
+    border-left: 4px solid #2980b9;
 }
 
 .prediction-details {
@@ -267,7 +268,7 @@ button:hover {
 /* Budget Suggestions */
 #budgetSuggestions {
     padding: 15px;
-    border-left: 4px solid #f1c40f;
+    border-left: 4px solid #f39c12;
     background-color: #fef9e7;
     border-radius: 0 8px 8px 0;
     margin-top: 15px;
@@ -282,11 +283,12 @@ button:hover {
 #budgetSuggestions li {
     margin-bottom: 8px;
     position: relative;
+    color: #2c3e50;
 }
 
 #budgetSuggestions li:before {
     content: "•";
-    color: #f1c40f;
+    color: #f39c12;
     font-weight: bold;
     position: absolute;
     left: -15px;
@@ -339,11 +341,15 @@ button:hover {
     animation: fadeIn 0.3s ease-out;
 }
 
-/* Dark Mode Support */
+/* Dark Mode Support - IMPROVED CONTRAST */
 @media (prefers-color-scheme: dark) {
     body {
-        background-color: #1a1a1a;
-        color: #f4f6f8;
+        background-color: #121212;
+        color: #ffffff;
+    }
+
+    h1, h2, h3 {
+        color: #ffffff;
     }
 
     .budget-input-section,
@@ -355,29 +361,74 @@ button:hover {
     .category-management,
     .expense-summary,
     .filter-sort-section {
-        background-color: #2d2d2d;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        background-color: #1f1f1f;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        color: #ffffff;
     }
 
     input, select {
-        background-color: #333;
+        background-color: #2d2d2d;
         border-color: #444;
-        color: #f4f6f8;
+        color: #ffffff;
     }
 
     .summary-item {
-        background-color: #333;
+        background-color: #2d2d2d;
+    }
+
+    .summary-item p:first-child {
+        color: #b3b3b3;
+    }
+
+    .summary-item p:last-child {
+        color: #ffffff;
     }
 
     .expense-item:hover {
-        background-color: #333;
+        background-color: #2d2d2d;
     }
 
     .ml-predictions {
-        background-color: #333;
+        background-color: #233240;
+        color: #ffffff;
+    }
+
+    .prediction-details {
+        color: #e0e0e0;
     }
 
     #budgetSuggestions {
-        background-color: #332e1f;
+        background-color: #3d3523;
+        color: #ffffff;
+    }
+
+    #budgetSuggestions li {
+        color: #e0e0e0;
+    }
+
+    #expenseWarning {
+        background-color: #4d2222;
+        border-color: #6b2b2b;
+        color: #ffb3b3;
+    }
+    
+    .export-button {
+        background-color: #1d7843;
+    }
+    
+    .export-button:hover {
+        background-color: #165c33;
+    }
+    
+    .secondary-button {
+        background-color: #5a6263;
+    }
+    
+    .secondary-button:hover {
+        background-color: #474d4e;
+    }
+    
+    .expense-item {
+        border-bottom: 1px solid #333;
     }
 }
