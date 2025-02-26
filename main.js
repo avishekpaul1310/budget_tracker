@@ -487,17 +487,69 @@ function updateExpenseSummary(expensesToAnalyze = expenses) {
     summaryDiv.innerHTML = summaryHTML;
 }
 
-// Update ML predictions - NEW FUNCTION
+// Update ML predictions 
 function updatePredictions(category) {
+    // Check if we have any expenses for this category
+    const categoryExpenses = expenses.filter(e => e.category === category);
+    const mlPredictionsSection = document.getElementById('mlPredictions');
+    
+    // Always show the predictions section to prevent layout shifting
+    mlPredictionsSection.style.display = 'block';
+    
+    // If no expenses yet, show a starter message
+    if (categoryExpenses.length === 0) {
+        document.getElementById('expectedAmount').textContent = `$0.00`;
+        document.getElementById('predictionConfidence').textContent = `0.0%`;
+        document.getElementById('suggestedMax').textContent = `$0.00`;
+        
+        // Add message element if it doesn't exist
+        let messageEl = document.getElementById('predictionMessage');
+        if (!messageEl) {
+            messageEl = document.createElement('p');
+            messageEl.id = 'predictionMessage';
+            messageEl.className = 'prediction-message';
+            document.querySelector('.prediction-details').appendChild(messageEl);
+        }
+        
+        messageEl.textContent = `No data yet for "${category}". Add an expense to generate predictions.`;
+        
+        // Reset confidence bar if it exists
+        const confidenceBar = document.getElementById('confidenceBar');
+        if (confidenceBar) {
+            confidenceBar.style.width = `0%`;
+            confidenceBar.style.backgroundColor = '#e74c3c'; // Low confidence
+        }
+        return;
+    }
+    
+    // Get prediction data
     const prediction = predictExpense(category);
     
     if (prediction) {
-        document.getElementById('mlPredictions').style.display = 'block';
         document.getElementById('expectedAmount').textContent = `$${prediction.expectedAmount.toFixed(2)}`;
         document.getElementById('predictionConfidence').textContent = `${prediction.confidence.toFixed(1)}%`;
         document.getElementById('suggestedMax').textContent = `$${prediction.suggestedMax.toFixed(2)}`;
         
-        // Add visual indicator for confidence level if it exists
+        // Add a helpful message based on confidence
+        let messageEl = document.getElementById('predictionMessage');
+        if (!messageEl) {
+            messageEl = document.createElement('p');
+            messageEl.id = 'predictionMessage';
+            messageEl.className = 'prediction-message';
+            document.querySelector('.prediction-details').appendChild(messageEl);
+        }
+        
+        let message = '';
+        if (prediction.confidence < 40) {
+            message = `Limited data for "${category}". Predictions will improve as you add more expenses.`;
+        } else if (prediction.confidence < 70) {
+            message = `Moderate confidence in "${category}" predictions. Typical spending is around $${prediction.expectedAmount.toFixed(2)}.`;
+        } else {
+            message = `Strong predictive patterns detected for "${category}". You typically spend $${prediction.expectedAmount.toFixed(2)}.`;
+        }
+        messageEl.textContent = message;
+        
+        // Update confidence bar if it exists
         const confidenceBar = document.getElementById('confidenceBar');
         if (confidenceBar) {
             confidenceBar.style.width = `${prediction.confidence}%`;
@@ -510,11 +562,20 @@ function updatePredictions(category) {
             }
         }
     } else {
-        document.getElementById('mlPredictions').style.display = 'none';
+        document.getElementById('expectedAmount').textContent = `$0.00`;
+        document.getElementById('predictionConfidence').textContent = `0.0%`;
+        document.getElementById('suggestedMax').textContent = `$0.00`;
+        
+        let messageEl = document.getElementById('predictionMessage');
+        if (!messageEl) {
+            messageEl = document.createElement('p');
+            messageEl.id = 'predictionMessage';
+            messageEl.className = 'prediction-message';
+            document.querySelector('.prediction-details').appendChild(messageEl);
+        }
+        messageEl.textContent = `Error getting predictions for "${category}".`;
     }
 }
-
-// Provide budget suggestions with ML insights
 
 // Provide budget suggestions with ML insights - COMPLETELY REVAMPED
 function provideBudgetSuggestions() {
@@ -814,6 +875,29 @@ document.addEventListener('DOMContentLoaded', () => {
     // Update predictions when category changes
     expenseCategory.addEventListener('change', function() {
         updatePredictions(this.value);
+        
+        // Also update anomaly check if amount is already entered
+        const amountInput = document.getElementById('expenseAmount');
+        if (amountInput && amountInput.value) {
+            const amount = parseFloat(amountInput.value);
+            const category = this.value;
+            
+            if (amount && category) {
+                const anomalyCheck = isAnomalousExpense(amount, category);
+                const warningEl = document.getElementById('expenseWarning');
+                
+                if (anomalyCheck.isAnomalous) {
+                    let message = anomalyCheck.isHigher ? 
+                        `This amount appears unusually HIGH for ${category}. Typical: $${anomalyCheck.typicalRange.avg}.` : 
+                        `This amount appears unusually LOW for ${category}. Typical: $${anomalyCheck.typicalRange.avg}.`;
+                    
+                    warningEl.textContent = message;
+                    warningEl.style.display = 'block';
+                } else {
+                    warningEl.style.display = 'none';
+                }
+            }
+        }
     });
     
     // Validate expense amount input
