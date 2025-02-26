@@ -8,12 +8,7 @@ let mlModel = {
     trained: false
 };
 // Add new global variable for categories
-let expenseCategories = [
-    "equipment",
-    "salaries",
-    "marketing",
-    "miscellaneous"
-];
+let expenseCategories = [];
 
 // Set the total budget
 function setTotalBudget() {
@@ -74,7 +69,7 @@ function updateCategoryDropdowns() {
 
 // Train the statistical model
 function trainModel() {
-    if (expenses.length < 1) return false;  // Changed from 2 to 1 - will work with any data
+    if (expenses.length < 1) return false;  // Changed from 5 to 1 - will work with any data
     
     const categoryStats = {};
     expenses.forEach(expense => {
@@ -147,7 +142,7 @@ function isAnomalousExpense(amount, category) {
     if (categoryExpenses.length === 0) return { isAnomalous: false };
     
     // If we have just one previous expense, compare directly
-    if (categoryExpenses.length === 1 && !mlModel.trained) {
+    if (categoryExpenses.length === 1) {
         const previousAmount = categoryExpenses[0].amount;
         const deviation = Math.abs(amount - previousAmount);
         const percentChange = deviation / previousAmount;
@@ -167,9 +162,9 @@ function isAnomalousExpense(amount, category) {
         };
     }
     
-    // Otherwise, use the model if trained
+    // Train model if not trained
     if (!mlModel.trained) {
-        if (!trainModel()) return { isAnomalous: false };
+        trainModel();
     }
     
     const avg = mlModel.categoryAverages[category];
@@ -450,7 +445,6 @@ function updateCharts() {
     });
 }
 
-
 // Update expense summary with correct percentage calculations
 function updateExpenseSummary(expensesToAnalyze = expenses) {
     const summaryDiv = document.getElementById('expenseSummary');
@@ -493,60 +487,230 @@ function updateExpenseSummary(expensesToAnalyze = expenses) {
     summaryDiv.innerHTML = summaryHTML;
 }
 
+// Update ML predictions - NEW FUNCTION
+function updatePredictions(category) {
+    const prediction = predictExpense(category);
+    
+    if (prediction) {
+        document.getElementById('mlPredictions').style.display = 'block';
+        document.getElementById('expectedAmount').textContent = `$${prediction.expectedAmount.toFixed(2)}`;
+        document.getElementById('predictionConfidence').textContent = `${prediction.confidence.toFixed(1)}%`;
+        document.getElementById('suggestedMax').textContent = `$${prediction.suggestedMax.toFixed(2)}`;
+        
+        // Add visual indicator for confidence level if it exists
+        const confidenceBar = document.getElementById('confidenceBar');
+        if (confidenceBar) {
+            confidenceBar.style.width = `${prediction.confidence}%`;
+            if (prediction.confidence < 40) {
+                confidenceBar.style.backgroundColor = '#e74c3c'; // Low confidence
+            } else if (prediction.confidence < 70) {
+                confidenceBar.style.backgroundColor = '#f39c12'; // Medium confidence
+            } else {
+                confidenceBar.style.backgroundColor = '#27ae60'; // High confidence
+            }
+        }
+    } else {
+        document.getElementById('mlPredictions').style.display = 'none';
+    }
+}
+
 // Provide budget suggestions with ML insights
 
+// Provide budget suggestions with ML insights - COMPLETELY REVAMPED
 function provideBudgetSuggestions() {
     const totalExpenses = calculateTotalExpenses();
     const remainingBudget = totalBudget - totalExpenses;
     const suggestionsDiv = document.getElementById('budgetSuggestions');
     
-    let mlInsights = '';
-    if (mlModel.trained) {
-        mlInsights = `
-            <p><strong>AI-Powered Insights:</strong></p>
-            <ul>
-                ${Object.entries(mlModel.categoryAverages).map(([category, avg]) => 
-                    `<li>${category}: Average expense $${avg.toFixed(2)} 
-                     (±$${(mlModel.monthlyPatterns[category] || 0).toFixed(2)})</li>`
-                ).join('')}
-            </ul>
-        `;
-    }
-
     if (totalBudget === 0) {
-        suggestionsDiv.innerHTML = '<p>Please set a total budget to receive suggestions.</p>';
+        suggestionsDiv.innerHTML = '<div class="empty-suggestion"><p>Please set a total budget to receive AI-powered suggestions.</p></div>';
         return;
     }
-
-    let suggestionContent = '';
-    if (totalExpenses > totalBudget) {
-        suggestionContent = `
-            <p>⚠️ Warning: You have exceeded your budget by $${(totalExpenses - totalBudget).toFixed(2)}</p>
-            <p>Suggestions:</p>
-            <ul>
-                <li>Review and cut non-essential expenses</li>
-                <li>Consider reallocating funds from lower-priority categories</li>
-                <li>Look for cost-effective alternatives for expensive items</li>
-            </ul>
-        `;
-    } else if ((totalExpenses / totalBudget) > 0.8) {
-        suggestionContent = `
-            <p>⚠️ Note: You have used ${((totalExpenses / totalBudget) * 100).toFixed(1)}% of your budget</p>
-            <p>Suggestions:</p>
-            <ul>
-                <li>Carefully monitor remaining expenses</li>
-                <li>Prioritize essential expenses</li>
-                <li>Consider saving some budget for unexpected costs</li>
-            </ul>
-        `;
+    
+    if (expenses.length === 0) {
+        suggestionsDiv.innerHTML = '<div class="empty-suggestion"><p>Add some expenses to receive AI-powered budget insights.</p></div>';
+        return;
+    }
+    
+    // Calculate budget health metrics
+    const budgetUtilizationPercent = (totalExpenses / totalBudget) * 100;
+    const daysInMonth = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate();
+    const currentDay = new Date().getDate();
+    const monthProgress = (currentDay / daysInMonth) * 100;
+    
+    // Get spending by category
+    const categorySpending = {};
+    expenses.forEach(expense => {
+        categorySpending[expense.category] = (categorySpending[expense.category] || 0) + expense.amount;
+    });
+    
+    // Identify top spending categories
+    const topCategories = Object.entries(categorySpending)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([category, amount]) => ({ 
+            category, 
+            amount, 
+            percentage: ((amount / totalExpenses) * 100).toFixed(1) 
+        }));
+    
+    // Calculate burn rate (average daily spending)
+    const oldestExpenseDate = new Date(Math.min(...expenses.map(e => new Date(e.date).getTime())));
+    const daysSinceStart = Math.max(1, Math.ceil((new Date() - oldestExpenseDate) / (1000 * 60 * 60 * 24)));
+    const burnRate = totalExpenses / daysSinceStart;
+    
+    // Project days until budget depleted
+    const daysRemaining = burnRate > 0 ? Math.floor(remainingBudget / burnRate) : 999;
+    
+    // Find anomalous categories (spending significantly different from average)
+    const anomalousCategories = [];
+    if (mlModel.trained) {
+        Object.entries(mlModel.categoryAverages).forEach(([category, avg]) => {
+            const currentAmount = categorySpending[category] || 0;
+            const stdDev = mlModel.monthlyPatterns[category] || 0;
+            
+            if (Math.abs(currentAmount - avg) > (2 * stdDev) && stdDev > 0) {
+                anomalousCategories.push({
+                    category,
+                    isHigh: currentAmount > avg,
+                    difference: Math.abs(((currentAmount - avg) / avg) * 100).toFixed(1),
+                    amount: currentAmount.toFixed(2)
+                });
+            }
+        });
+    }
+    
+    // Generate overall budget status message
+    let overallStatus = '';
+    let statusClass = '';
+    
+    if (budgetUtilizationPercent > 100) {
+        overallStatus = `<span class="status-critical">⚠️ CRITICAL: Budget exceeded by $${(totalExpenses - totalBudget).toFixed(2)}</span>`;
+        statusClass = 'critical';
+    } else if (budgetUtilizationPercent > monthProgress + 15) {
+        overallStatus = `<span class="status-warning">⚠️ WARNING: Spending ahead of schedule (${budgetUtilizationPercent.toFixed(1)}% used vs ${monthProgress.toFixed(1)}% of time elapsed)</span>`;
+        statusClass = 'warning';
+    } else if (budgetUtilizationPercent < monthProgress - 20) {
+        overallStatus = `<span class="status-excellent">✅ EXCELLENT: Spending well under budget (${budgetUtilizationPercent.toFixed(1)}% used vs ${monthProgress.toFixed(1)}% of time elapsed)</span>`;
+        statusClass = 'excellent';
     } else {
-        suggestionContent = `
-            <p>✅ Your budget utilization is healthy at ${((totalExpenses / totalBudget) * 100).toFixed(1)}%</p>
-            <p>Remaining budget: $${remainingBudget.toFixed(2)}</p>
+        overallStatus = `<span class="status-good">✓ GOOD: Spending on track (${budgetUtilizationPercent.toFixed(1)}% used vs ${monthProgress.toFixed(1)}% of time elapsed)</span>`;
+        statusClass = 'good';
+    }
+    
+    // Build HTML for suggestions
+    let suggestionsHTML = `
+        <div class="budget-insights ${statusClass}">
+            <h3>AI-Powered Budget Insights</h3>
+            <div class="overall-status">${overallStatus}</div>
+            
+            <div class="insights-grid">
+                <div class="insight-card">
+                    <h4>Current Status</h4>
+                    <p>Budget: $${totalBudget.toFixed(2)}</p>
+                    <p>Spent: $${totalExpenses.toFixed(2)} (${budgetUtilizationPercent.toFixed(1)}%)</p>
+                    <p>Remaining: $${remainingBudget.toFixed(2)}</p>
+                    <div class="progress-container">
+                        <div class="progress-bar" style="width: ${Math.min(budgetUtilizationPercent, 100)}%; background-color: ${budgetUtilizationPercent > 90 ? '#e74c3c' : budgetUtilizationPercent > 75 ? '#f39c12' : '#27ae60'}"></div>
+                    </div>
+                </div>
+                
+                <div class="insight-card">
+                    <h4>Spending Forecast</h4>
+                    <p>Daily burn rate: $${burnRate.toFixed(2)}</p>
+                    <p>At this rate: <strong>${daysRemaining < 999 ? `${daysRemaining} days remaining` : 'Budget will last indefinitely'}</strong></p>
+                    <p>${budgetUtilizationPercent > monthProgress ? 'Spending faster than time elapsed' : 'Spending slower than time elapsed'}</p>
+                </div>
+                
+                <div class="insight-card">
+                    <h4>Top Spending Areas</h4>
+                    ${topCategories.map(cat => `<p>${cat.category}: $${cat.amount.toFixed(2)} (${cat.percentage}%)</p>`).join('')}
+                </div>
+    `;
+    
+    // Add anomaly insights if any exist
+    if (anomalousCategories.length > 0) {
+        suggestionsHTML += `
+            <div class="insight-card anomaly">
+                <h4>Unusual Spending Patterns</h4>
+                ${anomalousCategories.map(anomaly => 
+                    `<p>${anomaly.isHigh ? '🔺' : '🔻'} ${anomaly.category}: ${anomaly.isHigh ? 'Up' : 'Down'} by ${anomaly.difference}% ($${anomaly.amount})</p>`
+                ).join('')}
+            </div>
         `;
     }
-
-    suggestionsDiv.innerHTML = suggestionContent + mlInsights;
+    
+    // Closing the insights grid
+    suggestionsHTML += `</div>`;
+    
+    // Add actionable recommendations based on budget status
+    suggestionsHTML += `<h4>Smart Recommendations</h4><ul class="recommendations">`;
+    
+    // Generate tailored recommendations
+    if (budgetUtilizationPercent > 100) {
+        // Over budget recommendations
+        suggestionsHTML += `
+            <li>🚨 <strong>Immediate action needed:</strong> Review and cut non-essential expenses.</li>
+            <li>💰 Consider reallocating funds from lower-priority categories.</li>
+            <li>📊 Analyze if this is a one-time overspending or a recurring pattern.</li>
+        `;
+        
+        // Add category-specific recommendations for over budget
+        if (topCategories.length > 0) {
+            suggestionsHTML += `<li>📉 Focus on reducing expenses in your highest spending category: ${topCategories[0].category} (${topCategories[0].percentage}% of total).</li>`;
+        }
+        
+    } else if (budgetUtilizationPercent > monthProgress + 15) {
+        // Heading toward over budget
+        suggestionsHTML += `
+            <li>⚠️ <strong>Caution needed:</strong> Your spending rate may lead to budget overrun.</li>
+            <li>🔍 Identify non-essential expenses that can be deferred.</li>
+            <li>⏱️ At your current burn rate of $${burnRate.toFixed(2)}/day, consider adjusting to extend your budget.</li>
+        `;
+        
+        // Add category-specific recommendations
+        if (anomalousCategories.filter(a => a.isHigh).length > 0) {
+            const highAnomalies = anomalousCategories.filter(a => a.isHigh);
+            suggestionsHTML += `<li>💲 Look into why ${highAnomalies[0].category} is ${highAnomalies[0].difference}% higher than usual.</li>`;
+        }
+        
+    } else if (budgetUtilizationPercent < monthProgress - 20) {
+        // Under budget
+        suggestionsHTML += `
+            <li>✅ <strong>Great job:</strong> You're well under budget!</li>
+            <li>💼 Consider if some under-utilized budget areas need attention.</li>
+            <li>💰 You could potentially reallocate $${(totalBudget * 0.1).toFixed(2)} to higher-priority needs.</li>
+        `;
+        
+        // Add category-specific recommendations for under budget
+        if (anomalousCategories.filter(a => !a.isHigh).length > 0) {
+            const lowAnomalies = anomalousCategories.filter(a => !a.isHigh);
+            suggestionsHTML += `<li>📈 ${lowAnomalies[0].category} spending is unusually low. Consider if this area needs more investment.</li>`;
+        }
+        
+    } else {
+        // On track
+        suggestionsHTML += `
+            <li>✅ <strong>Well done:</strong> Your spending is on track with your budget timeline.</li>
+            <li>📆 Continue monitoring expenses to maintain this balance.</li>
+            <li>💡 Review upcoming expenses to ensure you stay on this positive trajectory.</li>
+        `;
+    }
+    
+    // Add general recommendations based on data insights
+    if (topCategories.length > 1 && (topCategories[0].percentage > 40)) {
+        suggestionsHTML += `<li>⚖️ Your budget is heavily weighted toward ${topCategories[0].category} (${topCategories[0].percentage}%). Consider if this allocation is optimal.</li>`;
+    }
+    
+    if (expenses.length > 10 && daysRemaining < 30 && remainingBudget > 0) {
+        suggestionsHTML += `<li>📅 Budget projection: At current rates, funds will be depleted in ${daysRemaining} days.</li>`;
+    }
+    
+    // Close the recommendations list and HTML
+    suggestionsHTML += `</ul>`;
+    
+    // Set the HTML content
+    suggestionsDiv.innerHTML = suggestionsHTML;
 }
 
 // Event listeners section - Complete
@@ -557,6 +721,45 @@ document.addEventListener('DOMContentLoaded', () => {
     provideBudgetSuggestions();
     updateCategoryDropdowns();
     updateExpenseSummary();
+
+    // Show a welcome message suggesting to add categories if none exist
+    if (expenseCategories.length === 0) {
+        const expenseCategorySelect = document.getElementById('expenseCategory');
+        if (expenseCategorySelect) {
+            // Add a disabled placeholder option
+            const placeholderOption = document.createElement('option');
+            placeholderOption.textContent = 'Please add categories first';
+            placeholderOption.disabled = true;
+            placeholderOption.selected = true;
+            expenseCategorySelect.appendChild(placeholderOption);
+            
+            // Show a notification or highlight the category management section
+            const categoryManagement = document.querySelector('.category-management');
+            if (categoryManagement) {
+                categoryManagement.classList.add('highlight-section');
+                
+                // You can also show a notification
+                const notification = document.createElement('div');
+                notification.className = 'notification';
+                notification.textContent = 'Please add categories before adding expenses';
+                notification.style.color = '#e74c3c';
+                notification.style.marginBottom = '10px';
+                notification.style.fontWeight = 'bold';
+                
+                // Insert before the expense input section
+                const expenseInputSection = document.querySelector('.expense-input-section');
+                if (expenseInputSection && expenseInputSection.parentNode) {
+                    expenseInputSection.parentNode.insertBefore(notification, expenseInputSection);
+                    
+                    // Auto-remove after 5 seconds
+                    setTimeout(() => {
+                        notification.style.opacity = '0';
+                        setTimeout(() => notification.remove(), 500);
+                    }, 5000);
+                }
+            }
+        }
+    }
     
     // Budget input events
     document.getElementById('totalBudget').addEventListener('input', function() {
@@ -574,6 +777,32 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('newCategory').addEventListener('keypress', function(e) {
         if (e.key === 'Enter') {
             addNewCategory();
+        }
+    });
+
+    document.getElementById('expenseCategory').addEventListener('change', function() {
+        updatePredictions(this.value);
+    });
+
+    // Update anomaly detection when amount changes
+    document.getElementById('expenseAmount').addEventListener('input', function() {
+        const amount = parseFloat(this.value);
+        const category = document.getElementById('expenseCategory').value;
+        
+        if (amount && category) {
+            const anomalyCheck = isAnomalousExpense(amount, category);
+            const warningEl = document.getElementById('expenseWarning');
+            
+            if (anomalyCheck.isAnomalous) {
+                let message = anomalyCheck.isHigher ? 
+                    `This amount appears unusually HIGH for ${category}. Typical: $${anomalyCheck.typicalRange.avg}.` : 
+                    `This amount appears unusually LOW for ${category}. Typical: $${anomalyCheck.typicalRange.avg}.`;
+                
+                warningEl.textContent = message;
+                warningEl.style.display = 'block';
+            } else {
+                warningEl.style.display = 'none';
+            }
         }
     });
     
@@ -712,15 +941,29 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 
+
 // Helper function to add sample data for testing (optional)
 function addSampleData() {
-    const sampleExpenses = [
-        { category: 'equipment', amount: 250, description: 'Office computer' },
-        { category: 'salaries', amount: 1200, description: 'Contract work' },
-        { category: 'marketing', amount: 350, description: 'Social media ads' },
-        { category: 'equipment', amount: 120, description: 'Printer' },
-        { category: 'miscellaneous', amount: 75, description: 'Office supplies' }
-    ];
+    // Check if we have categories first
+    if (expenseCategories.length === 0) {
+        alert('Please add some categories first before adding sample data.');
+        return;
+    }
+    
+    // Use the available categories for sample expenses
+    const sampleExpenses = [];
+    
+    // Generate sample expenses using available categories
+    for (let i = 0; i < Math.min(5, expenseCategories.length * 2); i++) {
+        // Pick a random category from available ones
+        const randomCategory = expenseCategories[Math.floor(Math.random() * expenseCategories.length)];
+        
+        sampleExpenses.push({
+            category: randomCategory,
+            amount: Math.floor(Math.random() * 900) + 100, // Random amount between 100 and 1000
+            description: `Sample ${randomCategory} expense ${i+1}`
+        });
+    }
     
     if (totalBudget === 0) {
         setTotalBudget(3000); // Set a default budget
@@ -736,9 +979,6 @@ function addSampleData() {
             isAnomalous: false
         };
         expenses.push(expense);
-        
-        // Wait a bit between adding expenses
-        setTimeout(() => {}, 50);
     });
     
     trainModel();
