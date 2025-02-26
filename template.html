@@ -1,15 +1,17 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Project Budget Tracker</title>
     <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
     <div class="container">
         <h1>Project Budget Tracker</h1>
-        
+
         <!-- Budget Input Section -->
         <div class="budget-input-section">
             <h2>Set Project Budget</h2>
@@ -40,23 +42,29 @@
                 <button onclick="addExpense()">Add Expense</button>
                 <button id="clearFields" class="secondary-button">Clear Fields</button>
             </div>
-            
+
             <!-- Warning Message -->
             <div id="expenseWarning" style="display: none;"></div>
-            
-            <!-- ML Predictions Section -->
+
+            <!-- ML Predictions Section - IMPROVED -->
             <div class="ml-predictions" id="mlPredictions">
                 <h3>AI Predictions</h3>
                 <div class="prediction-details">
-                    <p>Expected amount: <span id="expectedAmount">$0.00</span></p>
-                    <p>
-                        Confidence: <span id="predictionConfidence">0.0%</span>
+                    <div class="prediction-main-info">
+                        <p>Expected amount: <span id="expectedAmount">$0.00</span> <span id="trendIndicator"></span></p>
+                        <p>Confidence: <span id="predictionConfidence">0.0%</span></p>
                         <div class="confidence-bar-container">
                             <div id="confidenceBar" class="confidence-bar"></div>
                         </div>
-                    </p>
-                    <p>Suggested maximum: <span id="suggestedMax">$0.00</span></p>
+                    </div>
+                    <div class="prediction-range">
+                        <p>
+                            <span class="range-label">Suggested range:</span>
+                            <span id="suggestedMin">$0.00</span> - <span id="suggestedMax">$0.00</span>
+                        </p>
+                    </div>
                     <p id="predictionMessage" class="prediction-message">Select a category to see predictions</p>
+                    <div id="predictionTrend" class="prediction-trend"></div>
                 </div>
             </div>
         </div>
@@ -140,4 +148,5 @@
     <!-- Main JavaScript -->
     <script src="main.js"></script>
 </body>
+
 </html>
