@@ -74,7 +74,7 @@ function updateCategoryDropdowns() {
 
 // Train the statistical model
 function trainModel() {
-    if (expenses.length < 2) return false;
+    if (expenses.length < 1) return false;  // Changed from 2 to 1 - will work with any data
     
     const categoryStats = {};
     expenses.forEach(expense => {
@@ -93,10 +93,17 @@ function trainModel() {
     Object.keys(categoryStats).forEach(category => {
         mlModel.categoryAverages[category] = categoryStats[category].total / categoryStats[category].count;
         
-        const mean = mlModel.categoryAverages[category];
-        const squareDiffs = categoryStats[category].amounts.map(amount => Math.pow(amount - mean, 2));
-        const avgSquareDiff = squareDiffs.reduce((a, b) => a + b) / squareDiffs.length;
-        mlModel.monthlyPatterns[category] = Math.sqrt(avgSquareDiff);
+        // If we have only one value, use a default deviation estimate
+        if (categoryStats[category].amounts.length === 1) {
+            // Use 20% of the value as a default standard deviation
+            mlModel.monthlyPatterns[category] = mlModel.categoryAverages[category] * 0.2;
+        } else {
+            // Calculate standard deviation as before
+            const mean = mlModel.categoryAverages[category];
+            const squareDiffs = categoryStats[category].amounts.map(amount => Math.pow(amount - mean, 2));
+            const avgSquareDiff = squareDiffs.reduce((a, b) => a + b) / squareDiffs.length;
+            mlModel.monthlyPatterns[category] = Math.sqrt(avgSquareDiff);
+        }
     });
 
     mlModel.trained = true;
@@ -133,7 +140,37 @@ function calculateSuggestedMax(category) {
 
 // Check for anomalous expenses - IMPROVED to detect higher or lower
 function isAnomalousExpense(amount, category) {
-    if (!mlModel.trained) return { isAnomalous: false };
+    // Get previous expenses for this category
+    const categoryExpenses = expenses.filter(e => e.category === category);
+    
+    // If no expenses for this category yet, not anomalous
+    if (categoryExpenses.length === 0) return { isAnomalous: false };
+    
+    // If we have just one previous expense, compare directly
+    if (categoryExpenses.length === 1 && !mlModel.trained) {
+        const previousAmount = categoryExpenses[0].amount;
+        const deviation = Math.abs(amount - previousAmount);
+        const percentChange = deviation / previousAmount;
+        
+        // If more than 50% different than the previous amount, flag as anomalous
+        const isAnomalous = percentChange > 0.5;
+        const isHigher = amount > previousAmount;
+        
+        return {
+            isAnomalous,
+            isHigher,
+            typicalRange: {
+                min: Math.max(0, previousAmount * 0.5).toFixed(2),
+                avg: previousAmount.toFixed(2),
+                max: (previousAmount * 1.5).toFixed(2)
+            }
+        };
+    }
+    
+    // Otherwise, use the model if trained
+    if (!mlModel.trained) {
+        if (!trainModel()) return { isAnomalous: false };
+    }
     
     const avg = mlModel.categoryAverages[category];
     const stdDev = mlModel.monthlyPatterns[category];
@@ -366,24 +403,22 @@ function updateCharts() {
                 legend: {
                     position: 'right',
                     labels: {
+                        // Always use white text for legend
+                        color: '#ffffff',
                         font: {
                             size: 16,
                             weight: 'bold'
                         },
                         padding: 20,
-                        color: function(context) {
-                            // Return the color of the category
-                            return chartColors[context.dataIndex];
-                        }
-                    },
-                    onClick: function(e, legendItem, legend) {
-                        // Keep default behavior
-                        Chart.defaults.plugins.legend.onClick.call(this, e, legendItem, legend);
+                        usePointStyle: true,
+                        pointStyle: 'circle',
+                        boxWidth: 15
                     }
                 },
                 title: {
                     display: true,
                     text: 'Expense Distribution',
+                    color: '#ffffff',
                     font: {
                         size: 20,
                         weight: 'bold'
@@ -415,7 +450,8 @@ function updateCharts() {
     });
 }
 
-// Update expense summary - FIXED
+
+// Update expense summary with correct percentage calculations
 function updateExpenseSummary(expensesToAnalyze = expenses) {
     const summaryDiv = document.getElementById('expenseSummary');
     
@@ -427,7 +463,13 @@ function updateExpenseSummary(expensesToAnalyze = expenses) {
         return;
     }
     
-    const totalAmount = expensesToAnalyze.reduce((sum, exp) => sum + exp.amount, 0);
+    // Calculate filtered amount
+    const filteredAmount = expensesToAnalyze.reduce((sum, exp) => sum + exp.amount, 0);
+    
+    // Calculate total amount from ALL expenses, not just filtered
+    const totalAmount = expenses.reduce((sum, exp) => sum + exp.amount, 0);
+    
+    // Get category totals for the filtered expenses
     const categoryTotals = expensesToAnalyze.reduce((acc, exp) => {
         acc[exp.category] = (acc[exp.category] || 0) + exp.amount;
         return acc;
@@ -435,15 +477,16 @@ function updateExpenseSummary(expensesToAnalyze = expenses) {
     
     let summaryHTML = `
         <h3>Expense Summary</h3>
-        <p>Number of Expenses: ${expensesToAnalyze.length}</p>
-        <p>Total Amount: $${totalAmount.toFixed(2)}</p>
+        <p>Number of Expenses: ${expensesToAnalyze.length} ${expensesToAnalyze.length !== expenses.length ? `(of ${expenses.length} total)` : ''}</p>
+        <p>Amount: $${filteredAmount.toFixed(2)} ${expensesToAnalyze.length !== expenses.length ? `(${((filteredAmount / totalAmount) * 100).toFixed(1)}% of total)` : ''}</p>
         <h4>Category Breakdown:</h4>
         <ul>
     `;
     
     Object.entries(categoryTotals).forEach(([category, amount]) => {
+        // Calculate percentage against TOTAL expenses, not just filtered
         const percentage = ((amount / totalAmount) * 100).toFixed(1);
-        summaryHTML += `<li>${category}: $${amount.toFixed(2)} (${percentage}%)</li>`;
+        summaryHTML += `<li>${category}: $${amount.toFixed(2)} (${percentage}% of total budget)</li>`;
     });
     
     summaryHTML += '</ul>';
