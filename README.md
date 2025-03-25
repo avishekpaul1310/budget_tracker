@@ -2,6 +2,8 @@
 
 ![Budget Tracker](https://img.shields.io/badge/version-1.0.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
+![Tests](https://img.shields.io/badge/tests-passing-brightgreen)
+![JavaScript](https://img.shields.io/badge/javascript-ES6-yellow)
 
 A smart, interactive budget tracking application with machine learning capabilities to help you manage expenses and make informed financial decisions.
 
@@ -13,6 +15,7 @@ A smart, interactive budget tracking application with machine learning capabilit
 - [Installation](#-installation)
 - [Usage](#-usage)
 - [ML Features](#-ml-features)
+- [Testing](#-testing)
 - [Contributing](#-contributing)
 - [License](#-license)
 
@@ -37,6 +40,8 @@ To use the application:
 2. Add expense categories (groceries, rent, entertainment, etc.)
 3. Add expenses with amounts and descriptions
 4. View automatically generated charts, predictions, and budget insights
+
+![Budget Tracker Demo](https://via.placeholder.com/800x450?text=Budget+Tracker+Demo)
 
 ## 🛠️ Technologies Used
 
@@ -115,6 +120,28 @@ ML algorithms detect patterns in your expenses:
 - Identifies increasing or decreasing trends
 - Calculates trend percentages
 - Provides insights based on spending trajectories
+
+## 🧪 Testing
+
+This project includes comprehensive automated testing to ensure all functionality works correctly.
+
+### Running Tests
+
+1. Open the Budget Tracker in your browser
+2. Open the browser's developer console (F12 or right-click → Inspect → Console)
+3. Copy the contents of `tests.js` and paste it into the console
+4. Press Enter to run all tests
+
+### Test Coverage
+
+The testing suite covers:
+- Budget setup and validation
+- Category management
+- Expense addition and tracking
+- Filtering and sorting functionality
+- Anomaly detection
+- ML prediction features
+- Export functionality
 
 ## 👥 Contributing
 
